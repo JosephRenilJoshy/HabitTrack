@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/Solution Items/">
+    <File Path="README.md" />
+  </Folder>
+  <Project Path="HabitService/HabitService.csproj" Id="ec2e970c-e60d-4b53-9b26-5a6f4bc42ddd" />
+  <Project Path="NotificationService/NotificationService.csproj" Id="a4e71994-f2de-4a8f-9d16-57902efdd9c3" />
+  <Project Path="UserService/UserService.csproj" />
+</Solution>
