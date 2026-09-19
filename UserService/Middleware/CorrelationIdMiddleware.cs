@@ -16,8 +16,13 @@
 
             // Make it available on the response, so a client (or another service)
             // calling this one can see/propagate the same ID
+            // Also set it immediately so tests and any middleware that runs after
+            // can observe the header even before the response is started.
+            context.Response.Headers[CorrelationIdHeader] = correlationId;
+
             context.Response.OnStarting(() =>
             {
+                // Ensure the header is present when the response starts as well
                 context.Response.Headers[CorrelationIdHeader] = correlationId;
                 return Task.CompletedTask;
             });
