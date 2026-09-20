@@ -124,8 +124,11 @@ namespace HabitService.Tests.Services
             int checkInsThisWeek, int target, bool shouldQualify)
         {
             // Build check-ins spread across the current ISO week
-            var today = DateOnly.FromDateTime(DateTime.UtcNow);
-            var startOfWeek = today.AddDays(-(int)today.DayOfWeek + 1); // rough Monday anchor
+            // Use local date to match StreakCalculator's use of DateTime.Now
+            var today = DateOnly.FromDateTime(DateTime.Now);
+            // Calculate Monday (ISO week start). DayOfWeek: Monday=1..Sunday=0 so adjust
+            int daysSinceMonday = ((int)today.DayOfWeek + 6) % 7; // Monday -> 0, Sunday -> 6
+            var startOfWeek = today.AddDays(-daysSinceMonday);
 
             var dates = new List<DateOnly>();
             for (int i = 0; i < checkInsThisWeek; i++)
