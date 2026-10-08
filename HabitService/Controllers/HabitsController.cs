@@ -13,10 +13,12 @@ namespace HabitService.Controllers
     public class HabitsController : ControllerBase
     {
         private readonly IHabitService _habitService;
+        private readonly IHabitInsightService _habitInsightsService;
 
-        public HabitsController(IHabitService habitService)
+        public HabitsController(IHabitService habitService, IHabitInsightService habitInsightsService)
         {
             _habitService = habitService;
+            _habitInsightsService = habitInsightsService;
         }
 
         private int GetUserId()
@@ -94,6 +96,13 @@ namespace HabitService.Controllers
             // can send notifications to users about their habits.
             var result = await _habitService.GetAtRiskHabitsAsync();
             return Ok(result);
+        }
+
+        [HttpGet("{id}/insights")]
+        public async Task<ActionResult<object>> GetInsight(int id, CancellationToken cancellationToken)
+        {
+            var insight = await _habitInsightsService.GetInsightAsync(id, GetUserId(), cancellationToken);
+            return Ok(new { insight });
         }
     }
 }

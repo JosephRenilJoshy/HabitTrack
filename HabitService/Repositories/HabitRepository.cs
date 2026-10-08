@@ -120,5 +120,14 @@ namespace HabitService.Repositories
 
             return result.Select(r => (r.Habit, r.CheckInCount)).ToList();
         }
+
+        public async Task<List<DateOnly>> GetCheckInDatesInRangeAsync(int habitId, DateOnly startDate, DateOnly fromDate)
+        {
+            return await _context.CheckIns
+                .AsNoTracking()
+                .Where(c => c.HabitId == habitId && c.Date >= fromDate)
+                .Select(c => c.Date)
+                .ToListAsync();
+        }
     }
 }

@@ -9,12 +9,14 @@ namespace HabitService.Services
     {
         private readonly IHabitRepository _repository;
         private readonly IStreakCacheService _cache;
+        private readonly IInsightCacheService _insightCache;
         private readonly INotificationServiceClient _notificationClient;
 
-        public HabitService(IHabitRepository repository, IStreakCacheService cache, INotificationServiceClient notificationClient)
+        public HabitService(IHabitRepository repository, IStreakCacheService cache, IInsightCacheService insightCache, INotificationServiceClient notificationClient)
         {
             _repository = repository;
             _cache = cache;
+            _insightCache = insightCache;
             _notificationClient = notificationClient;
         }
         
@@ -102,6 +104,8 @@ namespace HabitService.Services
             await _repository.AddCheckInAsync(checkIn);
             await _repository.SaveChangesAsync();
             _cache.Invalidate(habitId); // Invalidate the cache for this habit's streak
+            _insightCache.Invalidate(habitId);
+
 
             var datesAfter = await _repository.GetCheckInDatesAsync(habitId);
             var (newStreak, _) = habit.FrequencyType == FrequencyType.Daily

@@ -23,9 +23,10 @@ namespace HabitService.Tests.Services
             repoMock.Setup(r => r.SaveChangesAsync()).Returns(Task.CompletedTask);
 
             var cacheMock = new Mock<IStreakCacheService>();
+            var insightCacheMock = new Mock<IInsightCacheService>();
             var notifyMock = new Mock<INotificationServiceClient>();
 
-            var service = new global::HabitService.Services.HabitService(repoMock.Object, cacheMock.Object, notifyMock.Object);
+            var service = new global::HabitService.Services.HabitService(repoMock.Object, cacheMock.Object, insightCacheMock.Object, notifyMock.Object);
 
             var dto = new CreateHabitDto { Name = "Test Habit", FrequencyType = FrequencyType.Daily };
 
@@ -45,7 +46,7 @@ namespace HabitService.Tests.Services
             var repoMock = new Mock<IHabitRepository>();
             repoMock.Setup(r => r.GetByIdAsync(It.IsAny<int>())).ReturnsAsync((Habit?)null);
 
-            var service = new global::HabitService.Services.HabitService(repoMock.Object, Mock.Of<IStreakCacheService>(), Mock.Of<INotificationServiceClient>());
+            var service = new global::HabitService.Services.HabitService(repoMock.Object, Mock.Of<IStreakCacheService>(), Mock.Of< IInsightCacheService>(), Mock.Of<INotificationServiceClient>());
 
             await Assert.ThrowsAsync<HabitService.Exceptions.NotFoundException>(() => service.GetByIdAsync(1, 1));
         }
@@ -59,7 +60,7 @@ namespace HabitService.Tests.Services
             repoMock.Setup(r => r.GetByIdAsync(1)).ReturnsAsync(habit);
             repoMock.Setup(r => r.HasCheckInForDateAsync(1, It.IsAny<DateOnly>())).ReturnsAsync(true);
 
-            var service = new global::HabitService.Services.HabitService(repoMock.Object, Mock.Of<IStreakCacheService>(), Mock.Of<INotificationServiceClient>());
+            var service = new global::HabitService.Services.HabitService(repoMock.Object, Mock.Of<IStreakCacheService>(), Mock.Of<IInsightCacheService>(), Mock.Of<INotificationServiceClient>());
 
             await Assert.ThrowsAsync<HabitService.Exceptions.ConflictException>(() => service.CheckInAsync(1, 5, new CheckInDto()));
         }
@@ -87,8 +88,9 @@ namespace HabitService.Tests.Services
 
             var cacheMock = new Mock<IStreakCacheService>();
             var notifyMock = new Mock<INotificationServiceClient>();
+            var insightCacheMock = new Mock<IInsightCacheService>();
 
-            var service = new global::HabitService.Services.HabitService(repoMock.Object, cacheMock.Object, notifyMock.Object);
+            var service = new global::HabitService.Services.HabitService(repoMock.Object, cacheMock.Object, insightCacheMock.Object, notifyMock.Object);
 
             await service.CheckInAsync(habit.Id, habit.UserId, new CheckInDto());
 

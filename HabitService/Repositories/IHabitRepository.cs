@@ -18,6 +18,6 @@ namespace HabitService.Repositories
         Task<List<Habit>> GetAllByUserIdAsync(int userId);
         Task<List<Habit>> GetAllHabitsAsync();
         Task<List<(Habit habit, int CheckInCount)>> GetAllByUserIdWithCountsAsync(int userId);
-
+        Task<List<DateOnly>> GetCheckInDatesInRangeAsync(int habitId, DateOnly startDate, DateOnly fromDate);
     }
 }

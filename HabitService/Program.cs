@@ -1,11 +1,13 @@
 
 using HabitService.Data;
 using HabitService.Filters;
+using HabitService.Integrations.Anthropic;
 using HabitService.Middlewares;
 using HabitService.Repositories;
 using HabitService.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using Scalar.AspNetCore;
 using Serilog;
@@ -46,11 +48,25 @@ namespace HabitService
                 {
                     client.BaseAddress = new Uri(builder.Configuration["NotificationServiceBaseUrl"]!);
                 });
+
+                builder.Services.Configure<AnthropicOptions>(builder.Configuration.GetSection("Anthropic"));
+                builder.Services.AddHttpClient<IInsightsClient, AnthropicInsightsClient>((serviceProvider, client) =>
+                {
+                    var options = serviceProvider.GetRequiredService<IOptions<AnthropicOptions>>().Value;
+
+                    client.BaseAddress = new Uri(options.BaseUrl);
+                    client.DefaultRequestHeaders.Add("x-api-key", options.ApiKey);
+                    client.DefaultRequestHeaders.Add("anthropic-version", options.ApiVersion);
+                    client.Timeout = TimeSpan.FromSeconds(20); // slightly above our per-call CancelAfter(15s), as a hard outer bound
+                });
+
                 builder.Services.AddScoped<IHabitRepository, HabitRepository>();
                 builder.Services.AddScoped<IHabitService, HabitService.Services.HabitService>();
                 builder.Services.AddScoped<ApiKeyAuthorizationFilter>();
                 builder.Services.AddSingleton<IStreakCacheService, StreakCacheService>();
                 builder.Services.AddScoped<StreakCacheResourceFilter>();
+                builder.Services.AddScoped<IHabitInsightService, HabitInsightsService>();
+                builder.Services.AddSingleton<IInsightCacheService, InsightCacheService>();
 
                 builder.Services.AddControllers();
                 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
