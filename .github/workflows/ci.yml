@@ -40,10 +40,51 @@ jobs:
           name: userservice
           path: ./publish/userservice
 
-  deploy-userservice:
-    # Runs only if build-and-test succeeded, and only for pushes to main (never for pull requests)
-    needs: build-and-test
+      # No --no-build here: publishing rebuilds so the Functions worker SDK produces its function metadata
+      - name: Publish MilestoneFunction
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: dotnet publish MilestoneFunction/MilestoneFunction.csproj --configuration Release --output ./publish/milestonefunction
+
+      - name: Upload MilestoneFunction artifact
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: milestonefunction
+          path: ./publish/milestonefunction
+
+  # Works out which parts of the repo changed in this push, so each deploy only runs when relevant
+  changes:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      userservice: ${{ steps.filter.outputs.userservice }}
+      milestonefunction: ${{ steps.filter.outputs.milestonefunction }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect changed paths
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            userservice:
+              - 'UserService/**'
+              - '.github/workflows/**'
+            milestonefunction:
+              - 'MilestoneFunction/**'
+              - 'HabitService/**'
+              - 'UserService/**'
+              - '.github/workflows/**'
+
+  deploy-userservice:
+    # Runs only if build-and-test succeeded, only for pushes to main, and only if UserService changed
+    needs: [build-and-test, changes]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.userservice == 'true'
     runs-on: ubuntu-latest
     permissions:
       id-token: write   # lets the job request an OIDC token for Azure login
@@ -68,3 +109,33 @@ jobs:
         with:
           app-name: habit-tracker-userservice
           package: ./publish/userservice
+
+  deploy-milestonefunction:
+    # Same gate as the UserService deploy, but also redeploys when HabitService or UserService change,
+    # because the function compiles those two projects in through its project references
+    needs: [build-and-test, changes]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.milestonefunction == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Download MilestoneFunction artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: milestonefunction
+          path: ./publish/milestonefunction
+
+      - name: Log in to Azure (OIDC, no stored password)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy to Function App
+        uses: Azure/functions-action@v1
+        with:
+          app-name: habit-tracker-milestonefunc
+          package: ./publish/milestonefunction
