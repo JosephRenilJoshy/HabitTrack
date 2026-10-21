@@ -1,15 +1,16 @@
-using Serilog;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Scalar.AspNetCore;
+using Serilog;
+using System.Reflection;
+using UserService.Authorization;
 using UserService.Data;
+using UserService.Filters;
 using UserService.Middleware;
 using UserService.Services;
 using UserService.Settings;
-using Microsoft.AspNetCore.Authentication.JwtBearer;
-using Microsoft.AspNetCore.Authorization;
-using UserService.Authorization;
-using Microsoft.AspNetCore.Mvc;
-using UserService.Filters;
 
 namespace UserService
 {
@@ -92,6 +93,16 @@ namespace UserService
                 builder.Services.AddOpenApi();
 
                 var app = builder.Build();
+
+                var version = Assembly.GetExecutingAssembly()
+                    .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "unknown";
+
+                app.MapGet("/health", (IConfiguration config) => Results.Ok(new
+                {
+                    status = "ok",
+                    version,
+                    slot = config["SLOT_LABEL"] ?? "unset"
+                })).AllowAnonymous();
 
                 app.UseMiddleware<CorrelationIdMiddleware>();
                 app.UseMiddleware<ExceptionHandler>();

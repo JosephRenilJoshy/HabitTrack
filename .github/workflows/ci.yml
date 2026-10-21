@@ -1,50 +1,50 @@
 name: CI/CD
- 
+
 on:
   push:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
- 
+
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
- 
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
- 
+
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
- 
+
       - name: Restore dependencies
         run: dotnet restore HabitTrack.slnx
- 
+
       - name: Build
-        run: dotnet build HabitTrack.slnx --no-restore --configuration Release
- 
+        run: dotnet build HabitTrack.slnx --no-restore --configuration Release -p:SourceRevisionId=${{ github.sha }}
+
       - name: Run tests
         run: dotnet test HabitTrack.slnx --no-build --configuration Release --verbosity normal
- 
+
       # Only on pushes to main: publish the exact binaries that were just built and tested
       - name: Publish UserService
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: dotnet publish UserService/UserService.csproj --no-build --configuration Release --output ./publish/userservice
- 
+
       - name: Upload UserService artifact
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: actions/upload-artifact@v4
         with:
           name: userservice
           path: ./publish/userservice
- 
+
       # No --no-build here: publishing rebuilds so the Functions worker SDK produces its function metadata
       - name: Publish MilestoneFunction
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: dotnet publish MilestoneFunction/MilestoneFunction.csproj --configuration Release --output ./publish/milestonefunction
- 
+
       # include-hidden-files is required: the Functions publish output contains a hidden .azurefunctions
       # folder (the trigger/binding extensions), and upload-artifact skips dot-folders by default
       - name: Upload MilestoneFunction artifact
@@ -54,7 +54,7 @@ jobs:
           name: milestonefunction
           path: ./publish/milestonefunction
           include-hidden-files: true
- 
+
   # Works out which parts of the repo changed in this push, so each deploy only runs when relevant
   changes:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -69,7 +69,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
- 
+
       - name: Detect changed paths
         id: filter
         uses: dorny/paths-filter@v3
@@ -83,7 +83,7 @@ jobs:
               - 'HabitService/**'
               - 'UserService/**'
               - '.github/workflows/**'
- 
+
   deploy-userservice:
     # Runs only if build-and-test succeeded, only for pushes to main, and only if UserService changed
     needs: [build-and-test, changes]
@@ -92,27 +92,27 @@ jobs:
     permissions:
       id-token: write   # lets the job request an OIDC token for Azure login
       contents: read
- 
+
     steps:
       - name: Download UserService artifact
         uses: actions/download-artifact@v4
         with:
           name: userservice
           path: ./publish/userservice
- 
+
       - name: Log in to Azure (OIDC, no stored password)
         uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
- 
+
       - name: Deploy to App Service
         uses: azure/webapps-deploy@v3
         with:
           app-name: habit-tracker-userservice
           package: ./publish/userservice
- 
+
   deploy-milestonefunction:
     # Same gate as the UserService deploy, but also redeploys when HabitService or UserService change,
     # because the function compiles those two projects in through its project references
@@ -122,21 +122,21 @@ jobs:
     permissions:
       id-token: write
       contents: read
- 
+
     steps:
       - name: Download MilestoneFunction artifact
         uses: actions/download-artifact@v4
         with:
           name: milestonefunction
           path: ./publish/milestonefunction
- 
+
       - name: Log in to Azure (OIDC, no stored password)
         uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
- 
+
       - name: Deploy to Function App
         uses: Azure/functions-action@v1
         with:
