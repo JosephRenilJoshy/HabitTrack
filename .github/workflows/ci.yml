@@ -88,6 +88,10 @@ jobs:
     # Runs only if build-and-test succeeded, only for pushes to main, and only if UserService changed
     needs: [build-and-test, changes]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.userservice == 'true'
+    # One deploy at a time, so two quick pushes cannot swap the slots in the wrong order
+    concurrency:
+      group: deploy-userservice
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     permissions:
       id-token: write   # lets the job request an OIDC token for Azure login
@@ -130,6 +134,33 @@ jobs:
           done
           echo "Staging did not report the expected version"
           exit 1
+
+      - name: Swap staging into production
+        id: swap
+        run: az webapp deployment slot swap --name habit-tracker-userservice --resource-group habit-tracker-rg --slot staging --target-slot production
+
+      # /health touches no database, so this only proves the new code is now serving production traffic
+      - name: Verify production after swap
+        id: verify
+        run: |
+          host=$(az webapp show --name habit-tracker-userservice --resource-group habit-tracker-rg --query defaultHostName -o tsv)
+          url="https://${host}/health"
+          for i in $(seq 1 12); do
+            body=$(curl -s --max-time 20 "$url" || true)
+            echo "Attempt $i: $body"
+            if echo "$body" | grep -q "${{ github.sha }}"; then
+              echo "Production is running commit ${{ github.sha }}"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "Production did not report the expected version"
+          exit 1
+
+      # If the swap went through but production is not healthy, swap back to the previous build
+      - name: Roll back by swapping again
+        if: failure() && steps.verify.outcome == 'failure'
+        run: az webapp deployment slot swap --name habit-tracker-userservice --resource-group habit-tracker-rg --slot staging --target-slot production
 
   deploy-milestonefunction:
     # Same gate as the UserService deploy, but also redeploys when HabitService or UserService change,
