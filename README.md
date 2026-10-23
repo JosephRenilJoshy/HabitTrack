@@ -181,12 +181,23 @@ push / PR to main
 
 ## Running locally
 
-1. Create an `appsettings.json` in each service (they are git-ignored). Use the same `Jwt` settings and `InternalApiKey` in all services, plus a connection string to a local SQL Server for each.
+1. In each service folder, copy `appsettings.example.json` to `appsettings.json` (git-ignored) and fill in your values. The `Jwt` settings must match in all three services, and `InternalApiKey` must match in HabitService and NotificationService. For `MilestoneFunction`, copy `local.settings.example.json` to `local.settings.json`.
 2. Apply migrations in each service: `Update-Database` (Package Manager Console) or `dotnet ef database update`.
 3. Optional: set `Anthropic:ApiKey` for HabitService to enable the insights endpoint. Without it the endpoint returns the fallback message.
 4. Start the services together (multiple startup projects in Visual Studio).
 5. Browse API docs at `/scalar/v1` on each service.
 6. Run the tests: `dotnet test HabitTrack.slnx`
+
+## Design decisions and tradeoffs
+
+| Decision | Why | What it costs | At larger scale |
+|---|---|---|---|
+| **Synchronous, best-effort HTTP from HabitService to NotificationService** | Simple and easy to debug. A failed notification is caught and logged, so it never breaks the check-in that already succeeded. | The call is awaited inside the request, which adds latency. There is no retry, so a notification sent while NotificationService is down is lost. | Publish a `MilestoneReached` event to a queue (for example Azure Service Bus) with an outbox table, so delivery is retried and the services are decoupled. |
+| **Database per service** | Services deploy and change independently, with no shared schema. | No cross-service joins or transactions. `MilestoneFunction` reads both databases directly as a shortcut. | Have the Function call service APIs, or consume events, instead of reading other services' databases. |
+| **Milestone detection in two places** (inline on check-in, and a timer function) | The inline path is immediate. The timer function is a safety net that catches anything missed, and it is idempotent through `LastCheckedStreak`. | Two code paths to keep consistent. | Pick one source of truth, ideally event-driven, and keep the timer only for reconciliation. |
+| **Shared symmetric JWT key** | Every service validates tokens locally, with no call to UserService. | Any service holding the key could also issue tokens, and rotating it means touching every service. | Asymmetric signing (RS256): only UserService holds the private key, and the others verify with a public key. |
+| **In-memory caches** (streaks, insights) | Fast and needs no extra infrastructure. | Per instance, lost on restart, and not shared across scaled-out instances. | A distributed cache such as Redis. |
+| **Fixed polling interval for at-risk checks** (NotificationService background job, every minute) | Simple, and works on any host. | Does work even when nothing changed, and every instance runs it. | A scheduled job or event-driven trigger, plus a lock so only one instance runs it. |
 
 ## Known simplifications
 

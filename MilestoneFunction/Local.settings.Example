@@ -1,0 +1,9 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated",
+    "HabitDbConnection": "Server=(localdb)\\MSSQLLocalDB;Database=HabitTrack_Habits;Trusted_Connection=True;TrustServerCertificate=True",
+    "UserDbConnection": "Server=(localdb)\\MSSQLLocalDB;Database=HabitTrack_Users;Trusted_Connection=True;TrustServerCertificate=True"
+  }
+}
