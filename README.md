@@ -1,178 +1,178 @@
 # HabitTrack
 
-A microservices-based habit tracking application built with ASP.NET Core, designed as a
-hands-on learning project covering .NET Core internals (middleware, filters, dependency
-injection), EF Core in depth, JWT-based authentication across services, and real
-service-to-service communication patterns.
+A habit-tracking backend built as **.NET 10 microservices**, with an **Azure deployment and CI/CD pipeline** on top. Three services, each with its own database, trust each other through JWTs and an internal API key. A timer-triggered Azure Function detects streak milestones.
 
-This project intentionally goes beyond CRUD — the goal was to build, by hand, the kind of
-infrastructure most jobs hand you pre-configured (middleware pipelines, custom filters,
-authentication/authorization plumbing) and to get real depth with EF Core (relationships,
-disconnected entities, N+1 diagnosis and fixes, transactions).
+## Highlights
 
----
+- Three microservices (User, Habit, Notification), each owning its own SQL database
+- Cross-service JWT trust plus an internal API key (`X-Internal-Api-Key`) for service-to-service calls
+- Custom middleware, all five ASP.NET filter types, EF Core depth (N+1 fix, migrations), DI lifetimes
+- xUnit test suite that gates every deployment
+- Azure: App Service with a staging slot, Azure SQL, Key Vault + Managed Identity, Azure Functions
+- GitHub Actions CI/CD with passwordless OIDC login, smoke test, slot swap and automatic rollback
 
 ## Architecture
 
-Three independent microservices, each with its own database, communicating over HTTP:
-
 ```
-┌─────────────────┐        ┌──────────────────┐        ┌───────────────────────┐
-│   User Service   │        │  Habit Service    │        │ Notification Service  │
-│                  │        │                   │        │                       │
-│ - Register/Login │        │ - Habit CRUD      │        │ - Background at-risk  │
-│ - JWT issuance   │◄──────►│ - Check-ins       │◄──────►│   check (scheduled)   │
-│ - User profile   │  JWT   │ - Streak calc     │  HTTP  │ - Milestone receiver  │
-│                  │ trust  │ - Repository      │  calls │ - Notification store  │
-│  UserServiceDb   │        │   pattern         │        │                       │
-└─────────────────┘        │  HabitServiceDb   │        │ NotificationServiceDb │
-                            └──────────────────┘        └───────────────────────┘
+            +-------------+        JWT        +--------------+
+  Client -> | UserService | <---------------- | HabitService |
+            +------+------+                   +------+-------+
+                   |                                 |
+              UserDb (SQL)                      HabitDb (SQL)
+                                                     |
+                                     X-Internal-Api-Key (HTTP)
+                                                     v
+                                          +----------------------+
+                                          | NotificationService  |
+                                          +----------+-----------+
+                                                     |
+                                            NotificationDb (SQL)
+
+  MilestoneFunction (timer, every 5 min) --reads--> HabitDb + UserDb
 ```
-
-- **User Service** issues JWTs on login. **Habit Service** and **Notification Service**
-  independently validate those tokens (same signing key/issuer/audience) — no service calls
-  back to User Service to check a token. This is the core benefit of JWT in a microservices
-  setup: stateless, verifiable trust without a network round-trip per request.
-- **Each service owns its own SQL Server database** — no shared schema, no cross-database
-  foreign keys. Referential integrity across services (e.g. a habit's `UserId`) is enforced
-  by trust in a validated JWT claim, not by a database constraint.
-- **Service-to-service calls** use `HttpClient` via `IHttpClientFactory`, protected by a
-  shared internal API key (`X-Internal-Api-Key`) — a distinct authorization mechanism from
-  user-facing JWT auth, used specifically for machine-to-machine calls that have no user
-  identity behind them.
-
----
 
 ## Services
 
-### User Service
-- Register, login, JWT issuance (HMAC-SHA256, `System.IdentityModel.Tokens.Jwt`)
-- Full CRUD on user profiles, with a custom **ownership authorization policy**
-  (`SameUserOnly`) — a user can only update/delete their own account
-- Password hashing via BCrypt
-- Direct EF Core `DbContext` access (no repository layer) — deliberate choice to maximize
-  hands-on EF Core exposure
-
-### Habit Service
-- Habit CRUD, check-ins (including **backdated/retroactive check-ins**)
-- **Streak calculation** for two frequency types:
-  - Daily habits — consecutive-day streaks, using `DateOnly.DayNumber` for safe date-gap math
-  - Weekly-target habits — rolling ISO-week bucketing, evaluating whether each week met a
-    configurable target count
-- **Repository pattern** (`IHabitRepository`) — contrasts with User Service's direct-DbContext
-  approach, demonstrating both patterns deliberately
-- Milestone detection (7/30/100-day streaks) with a service-to-service notification call
-- In-memory caching (Resource Filter) on the streak endpoint, with cache invalidation on
-  new check-ins
-
-### Notification Service
-- **Scheduled background job** (`BackgroundService`) checking for at-risk habits
-  (no check-in yet today, past a configurable time threshold)
-- **Milestone notification receiver** — an internal endpoint Habit Service calls when a
-  streak milestone is crossed
-- User-facing endpoint to fetch their own notifications (JWT-protected)
-
----
+| Service | Responsibility |
+|---|---|
+| **UserService** | Registration, login, JWT issuing, user profiles |
+| **HabitService** | Habits, check-ins, streak calculation, at-risk and milestone logic |
+| **NotificationService** | Stores and serves notifications; called by HabitService with the internal API key |
+| **MilestoneFunction** | Azure Function (timer trigger) that finds habits crossing a streak milestone |
 
 ## What this project deliberately demonstrates
 
-### Middleware (custom, hand-built — not framework defaults)
-- **Exception handling middleware** — global safety net, maps exception types to HTTP
-  status codes, logs unhandled exceptions
-- **Correlation ID middleware** — generates or propagates an `X-Correlation-Id` header,
-  attached to every log line for a request via `ILogger.BeginScope`
-- **Request logging middleware** — logs method, path, status code, and duration for every
-  request
-- Structured logging via **Serilog**, writing to console and rolling log files, with EF Core
-  query logging enabled during development
+- **Middleware:** custom middleware in the request pipeline
+- **Filters:** authorization, resource, action, exception and result filters
+  
+  | Filter | Used for |
+  |---|---|
+  | Authorization | Access checks before the action runs |
+  | Resource | Short-circuiting / caching around the action |
+  | Action | Cross-cutting logic before and after actions |
+  | Exception | Consistent error responses |
+  | Result | Shaping the response |
 
-### Filters (all 5 ASP.NET Core filter types, each with a distinct purpose)
-| Filter type | Where | Purpose |
+- **Auth:** JWT bearer authentication shared across services, plus an API-key scheme for internal calls
+- **EF Core:** per-service DbContext, migrations, an N+1 query fixed with eager loading and projection
+- **Dependency injection:** correct lifetimes (singleton / scoped / transient)
+- **Testing:** xUnit tests for streak and milestone logic, run by CI on every push
+
+## Azure deployment and CI/CD
+
+### What is deployed
+
+| Component | Azure service | Notes |
 |---|---|---|
-| Action Filter | User Service | Custom validation error response shape |
-| Exception Filter | User Service | Narrow handling of a specific `NotFoundException`, distinct from the global middleware handler |
-| Result Filter | User Service | Wraps every successful response in a consistent envelope |
-| Authorization Filter | Habit Service | API-key gate for internal, service-to-service endpoints |
-| Resource Filter | Habit Service | Short-circuits the pipeline entirely on a cache hit for the streak endpoint |
+| UserService | App Service (Linux, .NET 10, S1) | `production` and `staging` slots |
+| UserDb, HabitDb | Azure SQL | Free serverless offer and Basic DTU tier |
+| Secrets | Key Vault (RBAC mode) | Read by Managed Identity, no secrets in code |
+| MilestoneFunction | Azure Functions (Consumption) | Isolated worker, timer trigger |
+| Pipeline | GitHub Actions | OIDC login, no stored Azure passwords |
 
-### Authentication & Authorization
-- JWT issuance and independent validation across three services
-- Custom policy-based authorization (`IAuthorizationRequirement` + `AuthorizationHandler<T>`)
-  for resource ownership — not just "is authenticated," but "is this *their* resource"
-- A separate, distinct mechanism (shared API key) for service-to-service calls that have no
-  user identity at all
+HabitService and NotificationService were not deployed. The resources have since been torn down, so there are no live endpoints.
 
-### EF Core depth
-- Fluent API configuration (keys, required fields, unique indexes, enum-to-string conversion)
-- One-to-many relationships with explicit cascade delete behavior
-- Composite unique indexes (one check-in per habit per date)
-- Eager loading (`.Include()`) vs. projection (`.Select()`) vs. `.AsNoTracking()` — each used
-  deliberately where appropriate
-- Disconnected entity updates (`EntityState.Modified`) in the repository pattern
-- **A deliberately introduced and then fixed N+1 query** — proven via SQL query logging
-  (before: 1+N queries; after: 1 query using a single projected join/count)
-- Transactions and Unit-of-Work-style `SaveChanges()` control at the repository boundary
+### Architecture on Azure
 
-### Dependency Injection
-- Correct lifetime choices throughout (Scoped for anything depending on a per-request
-  `DbContext`; Singleton for stateless handlers and the in-memory cache)
-- The **Singleton background service + per-iteration `IServiceProvider.CreateScope()`**
-  pattern — required because a `BackgroundService` is a Singleton but its dependencies
-  (repository, `DbContext`) are Scoped
+```
+GitHub push --> GitHub Actions --OIDC--> Azure
+                                          |
+        +---------------------------------+----------------------+
+        v                                                        v
+  App Service (UserService)                         Function App (MilestoneFunction)
+   [staging] <--swap--> [production]                          |
+        |                                                     |
+        +--- Managed Identity ---> Key Vault (JwtKey, SQL)    +--> Azure SQL (Habit + User DBs)
+        |
+        +--> Azure SQL (UserDb)
+```
 
----
+### Configuration and secrets
+
+- `appsettings.json` is git-ignored, so CI and Azure never receive it. Configuration comes from App Settings instead.
+- Hierarchical keys use double underscores: `Jwt__Key` maps to `Jwt:Key`.
+- Sensitive values are Key Vault references: `@Microsoft.KeyVault(SecretUri=...)`.
+- Each slot has its own system-assigned Managed Identity, granted **Key Vault Secrets User**.
+- Slot-specific values (such as `SLOT_LABEL`) are marked as deployment slot settings so they stay with the slot during a swap.
+
+### MilestoneFunction
+
+Runs on `0 */5 * * * *`. For each habit it loads check-ins, computes the current streak, and asks `MilestoneChecker.GetCrossedMilestone(lastCheckedStreak, currentStreak)`. Only when a milestone is crossed does it look up the user's email. It then persists `LastCheckedStreak`, which makes the function **idempotent**: re-running it never re-announces the same milestone.
+
+### CI/CD pipeline
+
+```
+push / PR to main
+      |
+ build-and-test  (restore, build, xUnit tests)      <- failing tests stop everything
+      |
+ changes         (path filter: what changed?)
+      |
+      +--> deploy-userservice
+      |       deploy to staging --> smoke test /health (must report this commit SHA)
+      |       --> swap staging <-> production --> verify production --> rollback swap on failure
+      |
+      +--> deploy-milestonefunction
+```
+
+- **Tests gate deploys:** deployment jobs `need` the test job and only run on a push to `main`.
+- **Passwordless:** GitHub authenticates to Azure with OIDC federation (federated credential on the `main` branch, Contributor on one resource group). No client secret is stored.
+- **Build once:** the published output is uploaded as an artifact and deployed, not rebuilt.
+- **Path filters** (`dorny/paths-filter`):
+
+  | Changed path | Deploys |
+  |---|---|
+  | `UserService/**` | UserService |
+  | `MilestoneFunction/**`, `HabitService/**`, `UserService/**` | MilestoneFunction (it references both) |
+  | `.github/workflows/**` | Everything |
+
+- **Concurrency:** one deploy per service at a time.
+- **Version stamping:** the commit SHA is baked into the assembly (`SourceRevisionId`) and exposed by `/health`, so the pipeline can prove which build is running.
+
+### Zero-downtime release flow
+
+1. Deploy the new build to the **staging** slot.
+2. Smoke test staging `/health`, requiring the exact commit SHA.
+3. **Swap** staging and production. The new version is already warm, so users see no cold start.
+4. Verify production `/health` returns the same SHA.
+5. If verification fails, swap back. The previous version is still in the other slot.
+
+### Problems solved along the way
+
+| Problem | Cause | Fix |
+|---|---|---|
+| App served a PHP container | `CURRENT_STACK` metadata was "Unknown" | Set Stack to .NET 10 in Portal general settings |
+| Crash loop, exit code 150 | .NET 10 app on a .NET 8 runtime | `--linux-fx-version "DOTNETCORE:10.0"` |
+| Function deployed, zero functions listed | Hidden `.azurefunctions` folder dropped from artifact | `include-hidden-files: true` on upload |
+| Staging smoke test crashed (NullReference) | Git-ignored `appsettings.json` never reached CI | Supply `Jwt__*` App Settings and Key Vault `JwtKey` on both slots |
+| Key Vault "not allowed" for its own creator | RBAC mode needs explicit roles | Secrets Officer for the admin, Secrets User for identities |
+| SQL error 40615 | Client IP not in firewall | Add client IPv4 firewall rule |
+| Free SQL DB paused | Monthly free vCore-second allowance used | Left paused; avoided upgrading to stay free |
+| Connection string saved under wrong name | CLI quoting | Delete and re-add via Portal |
 
 ## Tech stack
 
-- ASP.NET Core 8 (Web API, Controllers)
-- Entity Framework Core 10 + SQL Server
-- JWT Bearer authentication (`Microsoft.AspNetCore.Authentication.JwtBearer`)
-- BCrypt.Net for password hashing
-- Serilog (console + rolling file sinks, structured logging)
-- Scalar for interactive API documentation (OpenAPI-based)
-
----
+.NET 10, ASP.NET Core, Entity Framework Core, SQL Server / Azure SQL, xUnit, Azure App Service, Azure Functions, Azure Key Vault, Managed Identity, GitHub Actions, Scalar (API docs).
 
 ## Running locally
 
-Each service is a separate project within the `HabitTrack` solution, each with its own
-SQL Server database (`UserServiceDb`, `HabitServiceDb`, `NotificationServiceDb`) and its
-own port.
-
-1. Ensure SQL Server (Developer Edition) is running locally
-2. Run `Update-Database` for each service's project (via Package Manager Console, with
-   the correct project selected as both Default Project and Startup Project)
-3. Configure the solution's multiple startup projects to run all three services together
-4. Each service exposes an interactive API reference via Scalar at `/scalar/v1`
-
-**Note:** the JWT signing key, issuer, and audience in each service's `appsettings.json`
-must match exactly across all three services for cross-service token validation to work.
-The internal API key (`InternalApiKey`) must similarly match between Habit Service and
-Notification Service.
-
----
+1. Create an `appsettings.json` in each service (they are git-ignored). Use the same `Jwt` settings and `InternalApiKey` in all services, plus a connection string to a local SQL Server for each.
+2. Apply migrations in each service: `Update-Database` (Package Manager Console) or `dotnet ef database update`.
+3. Start the services together (multiple startup projects in Visual Studio).
+4. Browse API docs at `/scalar/v1` on each service.
+5. Run the tests: `dotnet test HabitTrack.slnx`
 
 ## Known simplifications
 
-- **In-memory caching** (Habit Service's streak cache) is per-instance — a multi-instance
-  deployment would need a distributed cache (e.g. Redis) instead. The cache sits behind an
-  interface specifically so this swap wouldn't require changing any calling code.
-- **Milestone notifications use a direct, synchronous HTTP call** from Habit Service to
-  Notification Service, not a message queue. A genuine pub/sub upgrade (e.g. RabbitMQ or
-  Azure Service Bus) would decouple the two services further — this is a natural next step.
-- **The at-risk time threshold is a fixed UTC hour**, not per-user timezone-aware — a
-  production version would account for each user's own timezone.
-- **Shared constants (JWT settings shape, internal API header name) are duplicated** across
-  service projects rather than extracted into a shared library, since each service is
-  independently deployable. This is a deliberate trade-off for project simplicity; a header
-  name mismatch between two services was in fact hit and fixed during development, which is
-  exactly the failure mode this duplication risks at larger scale.
+- In-memory cache rather than a distributed cache
+- Synchronous HTTP between services instead of a message queue
+- At-risk hour is a fixed UTC value, not per-user time zone
+- Some shared constants are duplicated across services
+- The Function reads the databases directly rather than calling service APIs
+- `/health` does not check database connectivity
+- Only UserService and the Function were deployed to Azure
 
----
+## Future work
 
-## Still to build
-
-- Docker + Docker Compose for all three services and SQL Server
-- API Gateway (YARP/Ocelot) in front of all three services
-- Azure deployment for at least one service
-- Frontend (React)
+- **Docker containerization:** a Dockerfile per service and a Docker Compose setup (with SQL Server) so the whole system starts with one command
+- **Frontend:** a React client for the habit tracker
