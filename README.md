@@ -9,6 +9,7 @@ A habit-tracking backend built as **.NET 10 microservices**, with an **Azure dep
 - AI-generated habit insights via the Anthropic Messages API, with retries, timeout, caching and a graceful fallback
 - Custom middleware, all five ASP.NET filter types, EF Core depth (N+1 fix, migrations), DI lifetimes
 - xUnit test suite that gates every deployment
+- Docker: a Dockerfile per service and one `docker compose up` that starts SQL Server and all three services
 - Azure: App Service with a staging slot, Azure SQL, Key Vault + Managed Identity, Azure Functions
 - GitHub Actions CI/CD with passwordless OIDC login, smoke test, slot swap and automatic rollback
 
@@ -140,6 +141,7 @@ push / PR to main
       +--> deploy-milestonefunction
 ```
 
+- **Deploys are switched off:** the Azure resources were torn down after verification, so the deploy jobs only run when the repository variable `AZURE_DEPLOY_ENABLED` is `true`. Build and tests always run.
 - **Tests gate deploys:** deployment jobs `need` the test job and only run on a push to `main`.
 - **Passwordless:** GitHub authenticates to Azure with OIDC federation (federated credential on the `main` branch, Contributor on one resource group). No client secret is stored.
 - **Build once:** the published output is uploaded as an artifact and deployed, not rebuilt.
@@ -177,7 +179,72 @@ push / PR to main
 
 ## Tech stack
 
-.NET 10, ASP.NET Core, Entity Framework Core, SQL Server / Azure SQL, xUnit, Azure App Service, Azure Functions, Azure Key Vault, Managed Identity, GitHub Actions, Anthropic Messages API (insights), Scalar (API docs).
+.NET 10, ASP.NET Core, Entity Framework Core, SQL Server / Azure SQL, xUnit, Azure App Service, Azure Functions, Azure Key Vault, Managed Identity, GitHub Actions, Docker and Docker Compose, Anthropic Messages API (insights), Scalar (API docs).
+
+## Running with Docker
+
+The quickest way to run the whole system. One command starts SQL Server and the three services.
+
+**Requirements:** Docker Desktop (on Windows it uses WSL 2) with enough memory for SQL Server, about 2 GB.
+
+```bash
+# 1. Create your local settings file from the template
+cp .env.example .env          # Windows Command Prompt: copy .env.example .env
+
+# 2. Edit .env and set SA_PASSWORD, JWT_KEY and INTERNAL_API_KEY
+
+# 3. Build and start everything
+docker compose up --build
+```
+
+`.env` is git-ignored, so your secrets are never committed. `.env.example` only holds placeholders.
+
+| Setting in `.env` | Purpose |
+|---|---|
+| `SA_PASSWORD` | Password for the SQL Server container's `sa` login (8+ characters with upper case, lower case, a digit and a symbol; avoid `;`) |
+| `JWT_KEY` | JWT signing key shared by all three services (at least 32 characters) |
+| `INTERNAL_API_KEY` | Shared secret for service-to-service calls (`X-Internal-Api-Key`) |
+
+| What | Where |
+|---|---|
+| UserService | http://localhost:5139 |
+| HabitService | http://localhost:5096 |
+| NotificationService | http://localhost:5087 |
+| API docs (Scalar) | `/scalar/v1` on each service, for example http://localhost:5139/scalar/v1 |
+| SQL Server | `localhost,1433`, login `sa`, password from `.env` (check the `ports` line of `sqlserver` in `docker-compose.yml`) |
+
+**Try it:** open the UserService Scalar page, register a user and log in to get a JWT. Then open the HabitService Scalar page, authorize with the token, create a habit and check in.
+
+**Stop it:** `docker compose down` keeps the data in a Docker volume. `docker compose down -v` also deletes the data.
+
+### How it works
+
+- **Startup order:** SQL Server starts first and the services wait for its health check, because SQL Server needs 20 to 30 seconds before it accepts connections.
+- **Databases:** each service creates and migrates its own database at startup when `MigrateOnStartup=true`, which Compose sets. Normal runs outside Docker are unaffected, because the flag isn't set there.
+- **Configuration:** everything comes from environment variables in `docker-compose.yml` and `.env`. No `appsettings.json` is baked into an image, and the `.dockerignore` files keep local config out.
+- **Networking:** the services reach each other by Compose service name (`http://notificationservice:8080/`), not `localhost`. Each container listens on port 8080, and Compose maps that to the host ports above.
+- **Images:** multi-stage builds (SDK to build, small ASP.NET runtime image to run), and the app runs as a non-root user.
+- **Data:** SQL Server data lives in the named volume `sqldata`, so it survives restarts.
+- **Scalar docs:** Compose sets `ASPNETCORE_ENVIRONMENT=Development` so the API docs are available. Remove it for a production-style run.
+
+### Using your own SQL Server instead of the container
+
+Optional. Add these to your own `.env` to point the services at a SQL Server on your machine:
+
+```
+DB_SERVER=host.docker.internal,1433
+DB_USER=your_sql_login
+DB_PASSWORD=your_sql_login_password
+USER_DB=your_user_database
+HABIT_DB=your_habit_database
+NOTIFICATION_DB=your_notification_database
+```
+
+Without these lines the defaults apply: the `sqlserver` container, the `sa` login and the `HabitTrack_*` database names. Your SQL Server needs TCP/IP enabled on port 1433, SQL authentication, a SQL login with access to the databases, and an open firewall port. The container still starts in this mode, so give the `sqlserver` service a different host port in `docker-compose.yml` (for example `"1434:1433"`) if your local instance already uses 1433.
+
+### Not included
+
+`MilestoneFunction` is not part of the Compose setup, because it needs the Azure Functions tooling and a storage emulator. On Apple Silicon, SQL Server runs under emulation, so the first start is slow.
 
 ## Running locally
 
@@ -209,8 +276,9 @@ push / PR to main
 - The Function reads the databases directly rather than calling service APIs
 - `/health` does not check database connectivity
 - Only UserService and the Function were deployed to Azure
+- The Function is not containerized, so Docker Compose runs the three services only
+- Compose runs the services in the Development environment so the API docs are available, which is not a production configuration
 
 ## Future work
 
-- **Docker containerization:** a Dockerfile per service and a Docker Compose setup (with SQL Server) so the whole system starts with one command
 - **Frontend:** a React client for the habit tracker

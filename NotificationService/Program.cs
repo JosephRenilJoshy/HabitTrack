@@ -55,6 +55,11 @@ namespace NotificationService
             builder.Services.AddOpenApi();
 
             var app = builder.Build();
+            if (app.Configuration.GetValue<bool>("MigrateOnStartup"))
+            {
+                using var migrationScope = app.Services.CreateScope();
+                migrationScope.ServiceProvider.GetRequiredService<NotificationDbContext>().Database.Migrate();
+            }
 
             // Configure the HTTP request pipeline.
             if (app.Environment.IsDevelopment())

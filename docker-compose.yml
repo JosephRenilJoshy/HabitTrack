@@ -1,0 +1,65 @@
+x-service-env: &service-env
+  ASPNETCORE_ENVIRONMENT: Development
+  MigrateOnStartup: "true"
+  Jwt__Key: ${JWT_KEY}
+  Jwt__Issuer: UserService
+  Jwt__Audience: HabitTrackServices
+  Jwt__ExpiryMinutes: "60"
+  InternalApiKey: ${INTERNAL_API_KEY}
+
+services:
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: ${SA_PASSWORD}
+    ports:
+      - "1434:1433"
+    volumes:
+      - sqldata:/var/opt/mssql
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -Q \"SELECT 1\" || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+  userservice:
+    build: ./UserService
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+    environment:
+      <<: *service-env
+      ConnectionStrings__DefaultConnection: Server=${DB_SERVER:-sqlserver};Database=${USER_DB:-HabitTrack_Users};User Id=${DB_USER:-sa};Password=${DB_PASSWORD:-${SA_PASSWORD}};TrustServerCertificate=True
+    ports:
+      - "5139:8080"
+
+  habitservice:
+    build: ./HabitService
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+    environment:
+      <<: *service-env
+      ConnectionStrings__DefaultConnection: Server=${DB_SERVER:-sqlserver};Database=${HABIT_DB:-HabitTrack_Habits};User Id=${DB_USER:-sa};Password=${DB_PASSWORD:-${SA_PASSWORD}};TrustServerCertificate=True
+      NotificationServiceBaseUrl: http://notificationservice:8080/
+    ports:
+      - "5096:8080"
+
+  notificationservice:
+    build: ./NotificationService
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+      habitservice:
+        condition: service_started
+    environment:
+      <<: *service-env
+      ConnectionStrings__DefaultConnection: Server=${DB_SERVER:-sqlserver};Database=${NOTIFICATION_DB:-HabitTrack_Notifications};User Id=${DB_USER:-sa};Password=${DB_PASSWORD:-${SA_PASSWORD}};TrustServerCertificate=True
+      HabitServiceBaseUrl: http://habitservice:8080/
+    ports:
+      - "5087:8080"
+
+volumes:
+  sqldata:

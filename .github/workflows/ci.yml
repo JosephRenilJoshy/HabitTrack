@@ -87,7 +87,8 @@ jobs:
   deploy-userservice:
     # Runs only if build-and-test succeeded, only for pushes to main, and only if UserService changed
     needs: [build-and-test, changes]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.userservice == 'true'
+    # Azure deploys are off by default. Set the repository variable AZURE_DEPLOY_ENABLED to 'true' to turn them on
+    if: vars.AZURE_DEPLOY_ENABLED == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.userservice == 'true'
     # One deploy at a time, so two quick pushes cannot swap the slots in the wrong order
     concurrency:
       group: deploy-userservice
@@ -166,7 +167,8 @@ jobs:
     # Same gate as the UserService deploy, but also redeploys when HabitService or UserService change,
     # because the function compiles those two projects in through its project references
     needs: [build-and-test, changes]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.milestonefunction == 'true'
+    # Azure deploys are off by default. Set the repository variable AZURE_DEPLOY_ENABLED to 'true' to turn them on
+    if: vars.AZURE_DEPLOY_ENABLED == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.milestonefunction == 'true'
     runs-on: ubuntu-latest
     permissions:
       id-token: write

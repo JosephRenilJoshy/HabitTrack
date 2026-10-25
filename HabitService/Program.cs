@@ -97,6 +97,12 @@ namespace HabitService
 
                 var app = builder.Build();
 
+                if (app.Configuration.GetValue<bool>("MigrateOnStartup"))
+                {
+                    using var migrationScope = app.Services.CreateScope();
+                    migrationScope.ServiceProvider.GetRequiredService<HabitDbContext>().Database.Migrate();
+                }
+
                 app.UseMiddleware<CorrelationIdMiddleware>();
                 app.UseMiddleware<ExceptionHandler>();
                 app.UseMiddleware<RequestLogger>();

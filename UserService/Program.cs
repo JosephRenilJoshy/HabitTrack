@@ -94,6 +94,12 @@ namespace UserService
 
                 var app = builder.Build();
 
+                if (app.Configuration.GetValue<bool>("MigrateOnStartup"))
+                {
+                    using var migrationScope = app.Services.CreateScope();
+                    migrationScope.ServiceProvider.GetRequiredService<UserDbContext>().Database.Migrate();
+                }
+
                 var version = Assembly.GetExecutingAssembly()
                     .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "unknown";
 
